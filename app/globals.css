@@ -1,0 +1,59 @@
+@import 'tailwindcss';
+
+@theme {
+  /* Palette derived from arc.io's hero ramp:
+     #000B24 -> #0B223E -> #143453 -> #326796 -> #4197A1 -> #E2D0AA */
+  --color-ink: #000b24; /* their exact top-of-hero navy */
+  --color-panel: #071628; /* sits just above ink; rendered at /80 over the backdrop */
+  --color-edge: #1c3450;
+  /* Lifted from #7c839a: the panel now composites over navy rather than near-black,
+     and the old value fell to 4.26:1 there. This holds 5.9:1. */
+  --color-muted: #9199ad;
+
+  --color-accent: #4d8dff; /* text on dark */
+  --color-cta: #2f6fe0; /* white text on fill — 4.7:1 */
+  --color-arc: #2ee6a8; /* success/done */
+  --color-sand: #e2d0aa; /* arc.io's horizon band, used for the {…} eyebrow */
+
+  --font-sans: var(--font-dm), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-grotesk), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-space-mono), ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  /* Flat base only — the gradient lives in <ArcBackdrop /> so the horizon can stay
+     pinned to the viewport instead of stretching with the document. */
+  background: var(--color-ink);
+  color: #e8eaf2;
+  font-family: var(--font-sans);
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Numbers must not reflow while polling. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Arc uses Space Mono in curly braces for eyebrow labels. */
+.eyebrow {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+/* The step spinner and progress bar are decorative; never force motion on anyone who
+   has asked the OS not to. The elapsed timer still ticks — that is information. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
