@@ -1,6 +1,7 @@
 'use client'
 
 import { useBalances } from '@/hooks/useBalances'
+import { useGatewayFee } from '@/hooks/useGatewayFee'
 import { STEPS, useBridge } from '@/hooks/useBridge'
 import { arc, base } from '@/lib/chains'
 import { USDC_DECIMALS } from '@/lib/gateway'
@@ -10,6 +11,7 @@ import { useAccount } from 'wagmi'
 import { AddArcButton } from './AddArcButton'
 import { Balances } from './Balances'
 import { ConnectButton } from './ConnectButton'
+import { FeeBadge } from './FeeBadge'
 import { StepList } from './StepList'
 
 const fmt = (v: bigint) => Number(formatUnits(v, USDC_DECIMALS)).toLocaleString(undefined, {
@@ -21,6 +23,7 @@ export function BridgeCard() {
   const { address, isConnected } = useAccount()
   const { progress, busy, run, reset } = useBridge()
   const balances = useBalances(address)
+  const gatewayFee = useGatewayFee()
   const [amount, setAmount] = useState('')
   const [recipient, setRecipient] = useState('')
 
@@ -45,6 +48,17 @@ export function BridgeCard() {
   const done = progress.states.mint === 'done'
   /** Finalized Gateway balance = an interrupted bridge that can be resumed. */
   const pendingInGateway = balances.gatewayAvailable ?? 0n
+
+  /**
+   * A completed bridge leaves the unspent fee buffer behind (maxFee is a cap, the actual
+   * charge is lower), so a positive Gateway balance is not automatically resumable.
+   * Offering "Finish bridging 0.0065 USDC" when the fee alone is 0.011 is a button that
+   * can only fail. Require the balance to clear the fee cap before proposing a resume.
+   */
+  const feeCap =
+    gatewayFee.data !== undefined ? gatewayFee.data + gatewayFee.data / 2n : undefined
+  const resumable = pendingInGateway > 0n && feeCap !== undefined && pendingInGateway > feeCap
+  const gatewayDust = pendingInGateway > 0n && !resumable
   const failedStep = STEPS.find((s) => progress.states[s.id] === 'error')
 
   return (
@@ -74,13 +88,17 @@ export function BridgeCard() {
 
         {/* amount */}
         <label className="block space-y-2">
-          <span className="flex items-baseline justify-between text-xs text-muted">
-            <span>Amount</span>
+          <span className="flex items-baseline justify-between gap-2 text-xs text-muted">
+            <span className="flex items-baseline gap-2">
+              <span>Amount</span>
+              {/* Live, because the flat fee means the % is entirely a function of size. */}
+              <FeeBadge fee={gatewayFee.data} amount={parsed} />
+            </span>
             {walletBalance !== undefined && walletBalance > 0n && (
               <button
                 type="button"
                 onClick={() => setAmount(formatUnits(walletBalance, USDC_DECIMALS))}
-                className="text-accent transition hover:brightness-125"
+                className="shrink-0 text-accent transition hover:brightness-125"
               >
                 Max
               </button>
@@ -126,7 +144,7 @@ export function BridgeCard() {
          * re-runs approve+deposit and deposits a SECOND time. Resuming from `finalize`
          * skips both and just signs, attests and mints what is already there.
          */}
-        {isConnected && !busy && !done && pendingInGateway > 0n && (
+        {isConnected && !busy && !done && resumable && (
           <div className="space-y-2 rounded-xl border border-accent/40 bg-accent/10 p-3">
             <p className="text-xs leading-relaxed text-white">
               <span className="tnum font-medium">{fmt(pendingInGateway)} USDC</span> is
@@ -150,6 +168,15 @@ export function BridgeCard() {
               Resumes at the signing step — no new deposit, no extra Base gas.
             </p>
           </div>
+        )}
+
+        {/* Below the fee cap it cannot be bridged on its own, but the user should still
+            know where it went rather than wondering if it vanished. */}
+        {isConnected && !busy && gatewayDust && (
+          <p className="tnum text-[11px] leading-relaxed text-muted">
+            {fmt(pendingInGateway)} USDC of unspent fee buffer is left in Gateway — too
+            small to bridge alone, and it will be spent by your next bridge.
+          </p>
         )}
 
         {/* Disconnected, the primary action IS connecting — a disabled button labelled
