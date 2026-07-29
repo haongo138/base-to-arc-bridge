@@ -3,6 +3,11 @@
 Bridge USDC from **Base → Arc mainnet** (chain 5042) through Circle Gateway.
 Arc has no official bridge; Gateway already routes to it as domain 26.
 
+**Live:** https://base-to-arc-bridge.vercel.app
+
+Verified with real funds: 1 USDC bridged Base → Arc, recipient received 0.9835
+(0.010 Circle fee + 0.004989 Arc gas), both legs confirmed on-chain.
+
 See [SPEC.md](./SPEC.md) for the protocol details, what was verified against the live
 API, and where the source thread was wrong.
 
