@@ -9,7 +9,9 @@ Project → Settings → Environment Variables.
 | Variable | Scope | Required | Notes |
 |---|---|---|---|
 | `NEXT_PUBLIC_BASE_RPC_URL` | all | **strongly recommended** | Without it viem uses the public Base endpoint, which rate-limits. Balances will flicker or fail under real traffic. |
-| `NEXT_PUBLIC_ARC_RPC_URL` | all | recommended | Defaults to the endpoint in `lib/chains.ts`, which is not yours and may vanish. |
+| `ARC_RPC_URL` | **Production**, Sensitive | **yes** | Server-only. Browser reaches Arc via `/api/arc-rpc`. Never prefix with `NEXT_PUBLIC_` if the endpoint carries a key. |
+| `NEXT_PUBLIC_ARC_RPC_URL` | all | no | Escape hatch for a *keyless* Arc endpoint; bypasses the proxy. |
+| `NEXT_PUBLIC_ARC_WALLET_RPC_URL` | all | no | Absolute URL for the "Add Arc" button. Unset → button tells the user to add Arc manually. |
 | `NEXT_PUBLIC_ARC_EXPLORER_URL` | all | no | Defaults to the Blockscout instance. |
 | `GATEWAY_API_URL` | all | no | Defaults to `https://gateway-api.circle.com`. |
 | `ARC_RELAYER_PRIVATE_KEY` | **Production only**, Sensitive | see below | Server-only. Never prefix with `NEXT_PUBLIC_`. |

@@ -84,6 +84,13 @@ export async function POST(req: Request) {
     )
   }
 
+  if (!ARC_RPC_URL) {
+    return NextResponse.json(
+      { message: 'ARC_RPC_URL is not configured on the server.' },
+      { status: 501 },
+    )
+  }
+
   try {
     const client = createWalletClient({
       account: privateKeyToAccount(key as Hex),

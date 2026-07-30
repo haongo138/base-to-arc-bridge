@@ -4,9 +4,31 @@ import { base } from 'viem/chains'
 /** Verified against the RPC: eth_chainId -> 0x13b2. */
 export const ARC_CHAIN_ID = 5042
 
-export const ARC_RPC_URL =
+/**
+ * Server-side Arc endpoint. NOT prefixed with NEXT_PUBLIC_ on purpose: the provider
+ * authenticates with a key in the URL path (a wrong key returns 401), and NEXT_PUBLIC_
+ * values are inlined into the client bundle where anyone could read it.
+ *
+ * Only the proxy route and the relayer touch this directly.
+ */
+export const ARC_RPC_URL = process.env.ARC_RPC_URL || ''
+
+/** Browsers reach Arc through our own route, which holds the key server-side. */
+export const ARC_RPC_PROXY_PATH = '/api/arc-rpc'
+
+/**
+ * What the wagmi transport talks to.
+ *
+ * On the server we can use the credentialed endpoint directly. In the browser a
+ * relative path is correct — fetch resolves it against the current origin, and the key
+ * never leaves the server.
+ *
+ * NEXT_PUBLIC_ARC_RPC_URL remains an escape hatch for a keyless endpoint; leave it unset
+ * when the endpoint is credentialed.
+ */
+export const ARC_CLIENT_RPC_URL =
   process.env.NEXT_PUBLIC_ARC_RPC_URL ||
-  'https://real-pump-soon-trust-me-bro-again.poptyedev.com/'
+  (typeof window === 'undefined' ? ARC_RPC_URL || ARC_RPC_PROXY_PATH : ARC_RPC_PROXY_PATH)
 
 /**
  * Arc mainnet. Not in viem/chains — Arc has no official bridge or registry entry yet.
@@ -31,7 +53,7 @@ export const arc = defineChain({
   name: 'Arc',
   nativeCurrency: { name: 'USD Coin', symbol: 'USDC', decimals: 18 },
   rpcUrls: {
-    default: { http: [ARC_RPC_URL] },
+    default: { http: [ARC_CLIENT_RPC_URL] },
   },
   blockExplorers: {
     default: {
