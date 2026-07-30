@@ -4,6 +4,7 @@ import { useBalances } from '@/hooks/useBalances'
 import { useGatewayFee } from '@/hooks/useGatewayFee'
 import { STEPS, useBridge } from '@/hooks/useBridge'
 import { arc, base } from '@/lib/chains'
+import { showsOverBalanceWarning } from '@/lib/form-state'
 import { USDC_DECIMALS } from '@/lib/gateway'
 import { useMemo, useState } from 'react'
 import { formatUnits, isAddress, parseUnits, type Address } from 'viem'
@@ -59,6 +60,15 @@ export function BridgeCard() {
     gatewayFee.data !== undefined ? gatewayFee.data + gatewayFee.data / 2n : undefined
   const resumable = pendingInGateway > 0n && feeCap !== undefined && pendingInGateway > feeCap
   const gatewayDust = pendingInGateway > 0n && !resumable
+
+  /** Pre-flight only — see lib/form-state.ts for why this must not render mid-bridge. */
+  const overBalanceWarning = showsOverBalanceWarning({
+    amount: parsed,
+    walletBalance,
+    busy,
+    depositDone: progress.states.deposit === 'done',
+    gatewayBalance: pendingInGateway,
+  })
   const failedStep = STEPS.find((s) => progress.states[s.id] === 'error')
 
   return (
@@ -133,7 +143,7 @@ export function BridgeCard() {
           )}
         </label>
 
-        {overBalance && (
+        {overBalanceWarning && (
           <p className="text-xs text-red-400">Amount exceeds your USDC balance on Base.</p>
         )}
 
@@ -244,7 +254,13 @@ export function BridgeCard() {
         )}
 
         {done && (
-          <button onClick={reset} className="w-full text-xs text-muted hover:text-white">
+          <button
+            onClick={() => {
+              reset()
+              setAmount('')
+            }}
+            className="w-full text-xs text-muted hover:text-white"
+          >
             Bridge again
           </button>
         )}
