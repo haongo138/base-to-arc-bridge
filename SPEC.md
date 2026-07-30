@@ -44,6 +44,23 @@ as 20-byte hex (`0x77777777dcc4…ee`, 42 chars) even though the request require
 padded spec and take only `maxFee` and `maxBlockHeight` from the quote — that is what
 `buildBurnIntent(spec, quote)` in `lib/burn-intent.ts` enforces.
 
+### The fee cap leaves dust, and the next bridge absorbs it
+
+`maxFee` is a ceiling, not a charge. We sign `quote + 50%` as headroom, so if the quote is
+0.011 and the actual charge is 0.010, roughly 0.0065 stays in Gateway after every bridge.
+
+Left alone that accumulates forever, because the budget is what the user typed. So the
+signing step re-reads the finalized balance and, when the surplus is **at or below the fee
+cap**, spends the whole balance instead (`lib/budget.ts`).
+
+The cap is the right threshold: below it, `value` would be zero or negative, which is
+exactly what "too small to bridge on its own" means. A surplus *larger* than the cap is
+left alone — sweeping someone's abandoned 5 USDC deposit because they asked to bridge 1
+would be an over-send, not a convenience.
+
+Measured on a real 131.52 USDC bridge: available 131.528205, signed value 131.505205,
+actual fee 0.010000, dust 0.013000 (0.0065 pre-existing + 0.0065 newly unspent).
+
 ### Corrections to the source thread
 
 | Thread said | Reality |

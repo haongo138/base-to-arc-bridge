@@ -1,6 +1,7 @@
 'use client'
 
 import { erc20Abi, gatewayMinterAbi, gatewayWalletAbi } from '@/lib/abis'
+import { bridgeBudget } from '@/lib/budget'
 import { arc, base } from '@/lib/chains'
 import {
   buildBurnIntent,
@@ -219,15 +220,23 @@ export function useBridge() {
         if (should('attest')) {
           mark('sign', 'active')
 
-          // Quote with the full deposit. /v1/estimate completes the intent, returning
-          // both the real fee and a valid maxBlockHeight, so there is no need to read
-          // /v1/info or guess an expiry from the local chain head.
-          //
-          // Quoting against `amount` (an upper bound on what we will actually send) is
-          // deliberate: for any non-decreasing fee schedule that over-estimates rather
-          // than under-estimates the fee, which is the safe direction. Observed
-          // 2026-07-30 the Base→Arc fee is flat regardless of value.
-          const quoteSpec = buildTransferSpec({ depositor: address, recipient, value: amount })
+          /**
+           * Re-read the finalized balance. The finalize loop guaranteed it covers
+           * `amount`, but it may hold a little more — the unspent fee buffer from an
+           * earlier bridge, since maxFee is a ceiling and the real charge is lower.
+           * bridgeBudget decides whether that surplus is dust worth absorbing.
+           */
+          const { balances: signBalances } = await gateway.balances(DOMAIN.base, address)
+          const available = parseGatewayAmount(signBalances[0]?.balance)
+
+          // Quote against the ceiling, not the request: whatever we end up sending is
+          // <= available, so for any non-decreasing fee schedule this over-estimates
+          // rather than under-estimates. (Measured flat regardless of value.)
+          const quoteSpec = buildTransferSpec({
+            depositor: address,
+            recipient,
+            value: available > 0n ? available : amount,
+          })
           const quote = readQuote(await gateway.estimate([{ spec: quoteSpec }]))
 
           // Pad the cap so a fee change between quoting and executing does not void the
@@ -236,16 +245,16 @@ export function useBridge() {
 
           /**
            * The fee is charged ON TOP of `value`, from the same Gateway balance —
-           * /v1/transfer requires value + fee <= available. Sending the whole deposit is
+           * /v1/transfer requires value + fee <= available. Sending the whole budget is
            * therefore always rejected:
            *   "Insufficient balance … available 1.000000, required 1.01"
-           * So the deposit is the budget, and what we can mint is the deposit minus the
-           * fee cap. The user's amount is what leaves Base; the recipient gets the rest.
+           * So the budget is the ceiling and what we can mint is budget minus the fee cap.
            */
-          const sendValue = amount - maxFee
+          const budget = bridgeBudget({ requested: amount, available, feeCap: maxFee })
+          const sendValue = budget - maxFee
           if (sendValue <= 0n) {
             throw new Error(
-              `The Gateway fee (${formatUnits(maxFee, USDC_DECIMALS)} USDC incl. buffer) exceeds the ${formatUnits(amount, USDC_DECIMALS)} USDC you are bridging. Bridge a larger amount.`,
+              `The Gateway fee (${formatUnits(maxFee, USDC_DECIMALS)} USDC incl. buffer) exceeds the ${formatUnits(budget, USDC_DECIMALS)} USDC available to bridge. Bridge a larger amount.`,
             )
           }
 
