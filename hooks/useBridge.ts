@@ -31,7 +31,12 @@ import {
   useWriteContract,
   type Config,
 } from 'wagmi'
-import { switchChain, waitForTransactionReceipt, writeContract } from 'wagmi/actions'
+import {
+  getPublicClient,
+  switchChain,
+  waitForTransactionReceipt,
+  writeContract,
+} from 'wagmi/actions'
 
 export type StepId = 'approve' | 'deposit' | 'finalize' | 'sign' | 'attest' | 'mint'
 
@@ -151,6 +156,32 @@ export function useBridge() {
       // Local carry-through so we do not depend on setState having flushed.
       let attestation = progress.attestation
 
+      /**
+       * Estimate gas ourselves rather than letting the wallet do it.
+       *
+       * Left to MetaMask, a Base deposit that genuinely needs ~75k was submitted with a
+       * limit of 140,000,000 — Base's block gas limit, i.e. a fallback, not an estimate.
+       * Infura caps a single transaction at 25M and rejected it, and viem surfaced that
+       * as "the contract function deposit reverted", which is doubly misleading: nothing
+       * reverted and the real problem was the gas field.
+       *
+       * Estimating against our own configured Base RPC gives a concrete limit the wallet
+       * will not override, and if a call really would revert this throws the actual
+       * reason instead of an opaque RPC error.
+       */
+      const gasFor = async (params: {
+        address: Address
+        abi: typeof erc20Abi | typeof gatewayWalletAbi
+        functionName: string
+        args: readonly unknown[]
+      }) => {
+        const estimate = await publicClient.estimateContractGas({
+          ...params,
+          account: address,
+        } as never)
+        return estimate + estimate / 5n // 20% headroom for state drift between blocks
+      }
+
       try {
         if (chainId !== base.id) await switchChain(config, { chainId: base.id })
 
@@ -164,11 +195,15 @@ export function useBridge() {
             args: [address, GATEWAY_WALLET],
           })
           if (allowance < amount) {
-            const hash = await writeContractAsync({
+            const approveArgs = {
               address: USDC_BASE,
               abi: erc20Abi,
-              functionName: 'approve',
-              args: [GATEWAY_WALLET, amount],
+              functionName: 'approve' as const,
+              args: [GATEWAY_WALLET, amount] as const,
+            }
+            const hash = await writeContractAsync({
+              ...approveArgs,
+              gas: await gasFor(approveArgs),
               chainId: base.id,
             })
             await waitForTransactionReceipt(config, { hash, chainId: base.id })
@@ -179,11 +214,15 @@ export function useBridge() {
         // --- 2. deposit -----------------------------------------------------
         if (should('deposit')) {
           mark('deposit', 'active')
-          const hash = await writeContractAsync({
+          const depositArgs = {
             address: GATEWAY_WALLET,
             abi: gatewayWalletAbi,
-            functionName: 'deposit',
-            args: [USDC_BASE, amount],
+            functionName: 'deposit' as const,
+            args: [USDC_BASE, amount] as const,
+          }
+          const hash = await writeContractAsync({
+            ...depositArgs,
+            gas: await gasFor(depositArgs),
             chainId: base.id,
           })
           patch({ depositTx: hash })
@@ -288,7 +327,7 @@ export function useBridge() {
         if (should('mint')) {
           if (!attestation) throw new Error('No attestation to mint — re-run from the signing step')
           mark('mint', 'active')
-          const mintTx = await submitMint(attestation, config)
+          const mintTx = await submitMint(attestation, config, address)
           patch({ mintTx })
           mark('mint', 'done')
         }
@@ -335,6 +374,7 @@ function readAttestation(result: GatewayTransferResult | GatewayTransferResult[]
 async function submitMint(
   attn: { attestation: Hex; signature: Hex },
   config: Config,
+  account: Address,
 ): Promise<Hex> {
   const res = await fetch('/api/mint', {
     method: 'POST',
@@ -357,13 +397,27 @@ async function submitMint(
     )
   }
 
-  const hash = await writeContract(config, {
+  const mintArgs = {
     address: GATEWAY_MINTER,
     abi: gatewayMinterAbi,
-    functionName: 'gatewayMint',
-    args: [attn.attestation, attn.signature],
-    chainId: arc.id,
-  })
+    functionName: 'gatewayMint' as const,
+    args: [attn.attestation, attn.signature] as const,
+    chainId: arc.id as typeof arc.id,
+  }
+
+  // Same reason as the Base side: do not let the wallet invent a block-sized gas limit.
+  let gas: bigint | undefined
+  try {
+    const arcClient = getPublicClient(config, { chainId: arc.id })
+    if (arcClient) {
+      const estimate = await arcClient.estimateContractGas({ ...mintArgs, account } as never)
+      gas = estimate + estimate / 5n
+    }
+  } catch {
+    // Estimation is best-effort here; fall back to the wallet rather than block the mint.
+  }
+
+  const hash = await writeContract(config, { ...mintArgs, ...(gas ? { gas } : {}) })
   const receipt = await waitForTransactionReceipt(config, { hash, chainId: arc.id })
   if (receipt.status !== 'success') throw new Error('gatewayMint reverted on Arc')
   return hash
@@ -376,6 +430,9 @@ function friendlyError(error: unknown): string {
   }
   if (/insufficient funds/i.test(raw)) {
     return 'Insufficient funds for gas. On Arc, gas is paid in USDC.'
+  }
+  if (/maximum per-tx gas limit|exceeds .*gas limit/i.test(raw)) {
+    return 'Your wallet submitted an oversized gas limit and the RPC rejected it. Nothing was spent — retry, or switch the network RPC in your wallet.'
   }
   return raw
 }
